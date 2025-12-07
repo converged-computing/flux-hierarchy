@@ -4,7 +4,7 @@
 
 [![PyPI version](https://badge.fury.io/py/flux-hierarchy.svg)](https://badge.fury.io/py/flux-hierarchy)
 
-![img/flux-hierarchy.png](img/flux-hierarchy.png)
+![img/flux-hierarchy-small.png](img/flux-hierarchy-small.png)
 
 This tool enables generation and orchestration of Flux hierarchies, or trees of instances.
 Such a setup can enable programmatic organization and submission of commands, or high
