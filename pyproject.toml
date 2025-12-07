@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "flux-hierarchy"
+version = "0.0.0"
+description = "Flux instance hierarchy creation tool."
+
+# Note that a flux install with flux python bindings is required
+dependencies = []
+
+[project.scripts]
+flux-hierarchy = "flux_hierarchy.cli:run"
+
+[tool.black]
+exclude = "^env/"
+line-length = 100
+
+[tool.isort]
+profile = "black" # needed for black/isort compatibility
