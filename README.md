@@ -2,7 +2,7 @@
 
 > Create trees of Flux instances
 
-[![PyPI version](https://badge.fury.io/py/flux-hierarchy.svg)](https://badge.fury.io/py/flux-hierarchy)
+[![PyPI version](https://img.shields.io/pypi/v/flux-hierarchy)](https://img.shields.io/pypi/v/flux-hierarchy)
 
 ![https://github.com/converged-computing/flux-hierarchy/blob/main/img/flux-hierarchy-small.png?raw=true](https://github.com/converged-computing/flux-hierarchy/blob/main/img/flux-hierarchy-small.png?raw=true)
 
