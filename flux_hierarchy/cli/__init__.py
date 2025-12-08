@@ -60,6 +60,7 @@ def get_parser():
         formatter_class=argparse.RawTextHelpFormatter,
         description="Run job throughput test on a Flux Hierarchy",
     )
+    throughput.add_argument("-p", "--prefix", help="Prefix for the group (used for kvs)")
     throughput.add_argument(
         "-n", "--njobs", type=int, metavar="N", help="Total number of jobs to run", default=100
     )
@@ -76,9 +77,7 @@ def get_parser():
         "--setattr", action="append", help="Set job attribute ATTR=VAL", metavar="ATTR=VAL"
     )
     throughput.add_argument("execute", nargs=argparse.REMAINDER, default=["true"])
-    throughput.add_argument(
-        "--outdir", help="Output directory", default=os.path.join(os.getcwd(), "flux-hierarchy")
-    )
+    throughput.add_argument("--outdir", help="Output directory")
 
     for cmd in [start, throughput]:
         cmd.add_argument("config", help="hierachy description YAML file")
