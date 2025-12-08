@@ -39,6 +39,20 @@ For either of the above, the hierarchy will continue running (and you need to ca
 flux cancel $(flux job last)
 ```
 
+You can also view the shape of the hierarchy without running anything:
+
+```bash
+flux-hierarchy view ./examples/hierarchy-one.yaml
+```
+```console
+$ flux-hierarchy view ./examples/corona/hierarchy-2.yaml
+=>
+🌿 Leaf Broker Workers...{}
+level1 [Nodes: 2]
+    ├── level2 [Nodes: 1, Cores: 48]
+    └── level2 [Nodes: 1, Cores: 48]
+```
+
 ## Development
 
 To build and release:

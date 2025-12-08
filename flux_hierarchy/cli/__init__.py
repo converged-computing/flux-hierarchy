@@ -54,6 +54,12 @@ def get_parser():
     )
     start.add_argument("-o", "--out", help="output directory for hierarchy assets", default=None)
 
+    view = subparsers.add_parser(
+        "view",
+        formatter_class=argparse.RawTextHelpFormatter,
+        description="view an instance hierarchy",
+    )
+
     # Maybe this warrants a better name, but this seems to be what we'd want to do -
     throughput = subparsers.add_parser(
         "throughput",
@@ -79,7 +85,7 @@ def get_parser():
     throughput.add_argument("execute", nargs=argparse.REMAINDER, default=["true"])
     throughput.add_argument("--outdir", help="Output directory")
 
-    for cmd in [start, throughput]:
+    for cmd in [start, throughput, view]:
         cmd.add_argument("config", help="hierachy description YAML file")
 
     return parser
@@ -123,6 +129,8 @@ def run():
         from .throughput import main
     elif args.command == "start":
         from .start import main
+    elif args.command == "view":
+        from .view import main
     else:
         help(1)
     main(args, extra)
