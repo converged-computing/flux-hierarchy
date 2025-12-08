@@ -4,7 +4,7 @@
 
 [![PyPI version](https://badge.fury.io/py/flux-hierarchy.svg)](https://badge.fury.io/py/flux-hierarchy)
 
-![img/flux-hierarchy-small.png](img/flux-hierarchy-small.png)
+![https://github.com/converged-computing/flux-hierarchy/blob/main/img/flux-hierarchy-small.png?raw=true](https://github.com/converged-computing/flux-hierarchy/blob/main/img/flux-hierarchy-small.png?raw=true)
 
 This tool enables generation and orchestration of Flux hierarchies, or trees of instances.
 Such a setup can enable programmatic organization and submission of commands, or high
@@ -37,6 +37,18 @@ For either of the above, the hierarchy will continue running (and you need to ca
 
 ```bash
 flux cancel $(flux job last)
+```
+
+## Development
+
+To build and release:
+
+```bash
+python3 -m build
+# or
+python3 setup.py sdist bdist_wheel
+
+twine upload dist/flux-hierarchy-<version>*
 ```
 
 ## WIP
