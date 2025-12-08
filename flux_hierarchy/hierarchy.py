@@ -1,10 +1,11 @@
 import json
 import multiprocessing
 import os
-import shlex  # Add to your imports
-import subprocess  # Add to your imports
+import shlex
+import shutil
+import subprocess
 import sys
-import tempfile  # Add to your imports
+import tempfile
 import time
 
 import flux_hierarchy.utils as utils
@@ -51,9 +52,12 @@ class FluxHierarchy:
         """
         Create output directories.
         """
-        self.outdir = outdir or tempfile.mkdtemp(prefix="flux-hierarchy-")
-        self.socket_dir = os.path.join(self.outdir, "sockets")
-        self.uri_dir = os.path.join(self.outdir, "uris")
+        # Trying to make as short as possible
+        self.outdir = outdir or tempfile.mkdtemp(prefix="fh-")
+        self.socket_dir = os.path.join(self.outdir, "sock")
+        self.uri_dir = os.path.join(os.getcwd(), "uris")
+        if os.path.exists(self.uri_dir):
+            shutil.rmtree(self.uri_dir)
         self.logs_dir = os.path.join(self.outdir, "logs")
         for path in self.socket_dir, self.logs_dir, self.uri_dir:
             os.makedirs(path, exist_ok=True)
@@ -78,6 +82,14 @@ class FluxHierarchy:
         if not flux:
             raise ValueError("Cannot import flux, which is needed here.")
 
+    def view(self):
+        """
+        View the shape of a config.
+        """
+        self.pprint(f"\n🌿 Leaf Broker Workers...")
+        print(json.dumps(self.uris, indent=2))
+        self.print_tree()
+
     def start(self, interactive=True):
         """
         Start a flux hierarchy of a specific size. Currently, let's not submit
@@ -87,14 +99,17 @@ class FluxHierarchy:
         self.check()
 
         # Provide the first instance level (0)
+        # If it's a lead group, we need to collect the URI.
         self.pprint(f"🌲 Generating Flux Hierarchy...\n")
-        filepath = self.generate(self.entrypoint, "0")
+        filepath, is_leaf_group = self.generate(self.entrypoint, "0")
 
         # This launches our entrypoint to create nested hierarchy
         self.pprint(f"\n🚗 Starting...\n")
         cmd = ["flux", "job", "submit", "--flags=waitable", filepath]
         print(" ".join(cmd))
-        utils.run_command(cmd, check_output=True)
+        jobid = utils.run_command(cmd, check_output=True)["message"].strip()
+        if is_leaf_group:
+            self.save_uri(jobid, "0")
 
         # Show the brokers (with node addresses)
         self.pprint(f"\n🌿 Leaf Broker Workers...")
@@ -113,9 +128,19 @@ class FluxHierarchy:
         # Assume we want to return URIs to interact with
         return self.uris
 
+    def save_uri(self, jobid, uri_id):
+        """
+        Derive a URI for a job id and save based on the identifier
+        to the URI directory.
+        """
+        uri = utils.run_command(["flux", "uri", "--wait", jobid], check_output=True)[
+            "message"
+        ].strip()
+        utils.write_file(uri, os.path.join(self.uri_dir, uri_id))
+
     def load_uris(self):
         """
-        Load hierarchi uris.
+        Load hierarchy uris.
         """
         # Wait until uris are generated
         while len(os.listdir(self.uri_dir)) < len(self.uris):
@@ -166,6 +191,10 @@ class FluxHierarchy:
     def generate(self, group_name, instance_path):
         """
         Recursively generate and save a self-contained jobspec for a group.
+
+        We need to return if a left node was generated, which would populate
+        URIs. If the generated script is a leaf node, we need to collect a uri
+        from the job there (e.g., the top level.).
         """
         print(f"- Generating: {group_name} (instance: {instance_path})")
         group = self.groups[group_name]
@@ -180,7 +209,7 @@ class FluxHierarchy:
             os.path.join(self.outdir, f"jobspec-{group_name}-{instance_path}.json")
         )
         # Make the socket paths / uris in same root, regardless of intended interaction
-        socket_path = os.path.abspath(os.path.join(self.socket_dir, f"broker-{instance_path}.sock"))
+        socket_path = os.path.abspath(os.path.join(self.socket_dir, f"{instance_path}.sock"))
         uri_string = f"local://{socket_path}"
 
         # A leaf broker runs a broker that we can submit to
@@ -200,7 +229,7 @@ class FluxHierarchy:
 
                 for _ in range(count):
                     task_path = f"{instance_path}-{len(child_paths)}"
-                    child_path = self.generate(name, task_path)
+                    child_path, _ = self.generate(name, task_path)
                     child_paths[task_path] = child_path
 
             # Use flux trick to generate inner file for broker to execute
@@ -216,7 +245,7 @@ class FluxHierarchy:
         # Save the jobspec for the leaf or intermediate node.
         jobspec = get_jobspec_from_dry_run(command, self.resources[label], log_path)
         utils.write_json(jobspec, jobspec_filename)
-        return jobspec_filename
+        return jobspec_filename, is_leaf_group
 
     def generate_script(self, child_paths):
         """
@@ -231,9 +260,9 @@ class FluxHierarchy:
         for task_name, child_path in child_paths.items():
             script += f"flux job submit --flags=waitable {child_path}\n"
             # Add the uri to the URIs directory. This isn't great, will work for now
-            # This has the hostname and is an ssh based uri
-            script += "sleep 1\n"
-            script += f"flux uri $(flux job last) > {self.uri_dir}/{task_name}\n"
+            script += "job_host=$(flux hostlist --expand $(flux jobs -o '{nodelist}' $(flux job last) | sed -n '2p') | cut -d ' ' -f 1)\n"
+            script += f'echo "ssh://${{job_host}}{self.socket_dir}/{task_name}.sock" > {self.uri_dir}/{task_name} \n'
+            # script += f"flux uri --wait $(flux job last) > {self.uri_dir}/{task_name}\n"
         script += "\nflux job wait --all\n"
         return script
 
@@ -355,7 +384,6 @@ def get_jobspec_from_dry_run(command, resources, log_path=None):
     if exclusive:
         cmd += ["--exclusive"]
     cmd += command
-    print(cmd)
     process = subprocess.run(cmd, capture_output=True, text=True, check=True)
     return json.loads(process.stdout)
 
