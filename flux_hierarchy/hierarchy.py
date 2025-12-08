@@ -28,12 +28,13 @@ class FluxHierarchy:
     # TODO: allow different job shapes / specs.
     """
 
-    def __init__(self, config_path, outdir=None):
+    def __init__(self, config_path, outdir=None, prefix=None):
         """
         Create an output directory for jobspecs and submit files.
         """
         # We will store a lookup of uris
         self.config = utils.read_yaml(config_path)
+        self.prefix = prefix or ""
 
         # You can't handle me right now.
         self.uris = {}
@@ -52,8 +53,9 @@ class FluxHierarchy:
         """
         self.outdir = outdir or tempfile.mkdtemp(prefix="flux-hierarchy-")
         self.socket_dir = os.path.join(self.outdir, "sockets")
+        self.uri_dir = os.path.join(self.outdir, "uris")
         self.logs_dir = os.path.join(self.outdir, "logs")
-        for path in self.socket_dir, self.logs_dir:
+        for path in self.socket_dir, self.logs_dir, self.uri_dir:
             os.makedirs(path, exist_ok=True)
             # Make across nodes
             cmd = ["flux", "exec", "-r", "all", "mkdir", "-p", path]
@@ -94,9 +96,14 @@ class FluxHierarchy:
         print(" ".join(cmd))
         utils.run_command(cmd, check_output=True)
 
+        # Show the brokers (with node addresses)
         self.pprint(f"\n🌿 Leaf Broker Workers...")
         print(json.dumps(self.uris, indent=2))
         self.print_tree()
+
+        # Load URIs - this converts local:// into ssh:// with hostname
+        self.load_uris()
+        print(json.dumps(self.uris, indent=2))
 
         # Give the user an interactive mode
         self.connect()
@@ -106,15 +113,35 @@ class FluxHierarchy:
         # Assume we want to return URIs to interact with
         return self.uris
 
+    def load_uris(self):
+        """
+        Load hierarchi uris.
+        """
+        # Wait until uris are generated
+        while len(os.listdir(self.uri_dir)) < len(self.uris):
+            time.sleep(1)
+
+        uris = {}
+        print()
+        for name, _ in self.uris.items():
+            uri_path = os.path.join(self.uri_dir, name)
+            while not os.path.exists(uri_path):
+                self.pprint(f"[Waiting] {name}")
+                time.sleep(1)
+            uri = utils.read_file(uri_path).strip()
+            if not uri:
+                raise ValueError(f"URI for {name} was empty.")
+            uris[name] = uri
+        print()
+        self.uris = uris
+
     def connect(self):
         """
         Connect to all leaf broker URIs and store the handles.
         """
         if not self.uris:
             return
-        # IMPORTANT: if you do this immediately it will fail - the sockets need a setup delay
-        self.pprint(f"\nWaiting for {len(self.uris)} leaf brokers...\n")
-        time.sleep(10)
+        self.pprint(f"Waiting for {len(self.uris)} leaf brokers...\n")
         for name, uri in self.uris.items():
             self.handles[name] = flux.Flux(uri)
             self.handles[name].uri = uri
@@ -165,9 +192,8 @@ class FluxHierarchy:
         # Note that I tried first specifying cores/tasks, but it works better
         # to ask for exclusive.
         else:
-            print("ADD CHILD PATH")
             # Recursively generate all child files and collect their paths
-            child_paths = []
+            child_paths = {}
             for task in group["launch"]:
                 name = task["group"]
                 count = task.get("count") or 1
@@ -175,7 +201,7 @@ class FluxHierarchy:
                 for _ in range(count):
                     task_path = f"{instance_path}-{len(child_paths)}"
                     child_path = self.generate(name, task_path)
-                    child_paths.append(child_path)
+                    child_paths[task_path] = child_path
 
             # Use flux trick to generate inner file for broker to execute
             script_path = os.path.abspath(
@@ -202,11 +228,30 @@ class FluxHierarchy:
         script += "set -euo pipefail\n\n"
 
         # Generate the child jobs
-        for child_path in child_paths:
+        for task_name, child_path in child_paths.items():
             script += f"flux job submit --flags=waitable {child_path}\n"
-            script += f"flux uri $(flux job last)\n"
+            # Add the uri to the URIs directory. This isn't great, will work for now
+            # This has the hostname and is an ssh based uri
+            script += "sleep 1\n"
+            script += f"flux uri $(flux job last) > {self.uri_dir}/{task_name}\n"
         script += "\nflux job wait --all\n"
         return script
+
+    @property
+    def kvs_path(self):
+        """
+        kvs path for a named job. Not currently used.
+        """
+        prefix = self.prefix or "hierarchy"
+        return f"guest.handles.{prefix}"
+
+    def __exit__(self):
+        """
+        Cleanup: Recursively delete the session directory in the KVS.
+        """
+        # TODO some kind of cleanup, if desired.
+        pass
+        print(f"[Cleanup] Removing KVS session: {self.kvs_path}")
 
     def print_tree(self):
         """
@@ -613,9 +658,10 @@ def summarize_results(results, count):
     end_times = []
 
     # The job_info_dict is now fully populated...
-    for info in results[0][3].values():
-        start_times.append(info["submit"]["timestamp"])
-        end_times.append(info["clean"]["timestamp"])
+    for result in results:
+        for info in result[3].values():
+            start_times.append(info["submit"]["timestamp"])
+            end_times.append(info["clean"]["timestamp"])
 
     assert len(start_times) == count
     assert len(end_times) == count
