@@ -79,6 +79,7 @@ def get_parser():
     throughput.add_argument(
         "-o", "--setopt", action="append", help="Set shell option OPT or OPT=VAL", metavar="OPT"
     )
+    throughput.add_argument("-k", "--keep-env", help="Do not clean environment.", dest="keep_env")
     throughput.add_argument(
         "--setattr", action="append", help="Set job attribute ATTR=VAL", metavar="ATTR=VAL"
     )
