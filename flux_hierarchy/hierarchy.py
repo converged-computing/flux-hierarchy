@@ -29,7 +29,7 @@ class FluxHierarchy:
     # TODO: allow different job shapes / specs.
     """
 
-    def __init__(self, config_path, outdir=None, prefix=None):
+    def __init__(self, config_path, outdir=None, prefix=None, keep_env=False):
         """
         Create an output directory for jobspecs and submit files.
         """
@@ -42,6 +42,7 @@ class FluxHierarchy:
         self.handles = {}
         self.init_structure(outdir)
         self.groups = {g["name"]: g for g in self.config["groups"]}
+        self.clean_env = not keep_env
 
         # Still thinking about this one. I think it should be possible
         # to define an entire tree, but then only create a subgraph of it
@@ -61,9 +62,6 @@ class FluxHierarchy:
         self.logs_dir = os.path.join(self.outdir, "logs")
         for path in self.socket_dir, self.logs_dir, self.uri_dir:
             os.makedirs(path, exist_ok=True)
-            # Make across nodes
-            cmd = ["flux", "exec", "-r", "all", "mkdir", "-p", path]
-            subprocess.run(cmd, capture_output=True, text=True, check=True)
 
     @property
     def resources(self):
@@ -90,6 +88,33 @@ class FluxHierarchy:
         print(json.dumps(self.uris, indent=2))
         self.print_tree()
 
+    def stage(self):
+        """
+        Stage the entire temporary directory across all nodes before start.
+        """
+        name = os.path.basename(self.outdir)
+        cmd = ["flux", "archive", "create", "-C", self.outdir, "--name", name, "."]
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        cmd = ["flux", "exec", "-r", "all", "-x", "0", "mkdir", "-p", self.outdir]
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        cmd = [
+            "flux",
+            "exec",
+            "-r",
+            "all",
+            "-x",
+            "0",
+            "flux",
+            "archive",
+            "extract",
+            "-C",
+            self.outdir,
+            "--name",
+            name,
+            "--overwrite",
+        ]
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+
     def start(self, interactive=True):
         """
         Start a flux hierarchy of a specific size. Currently, let's not submit
@@ -102,6 +127,9 @@ class FluxHierarchy:
         # If it's a lead group, we need to collect the URI.
         self.pprint(f"🌲 Generating Flux Hierarchy...\n")
         filepath, is_leaf_group = self.generate(self.entrypoint, "0")
+
+        # We need to stage the scripts across all nodes
+        self.stage()
 
         # This launches our entrypoint to create nested hierarchy
         self.pprint(f"\n🚗 Starting...\n")
@@ -227,8 +255,8 @@ class FluxHierarchy:
                 name = task["group"]
                 count = task.get("count") or 1
 
-                for _ in range(count):
-                    task_path = f"{instance_path}-{len(child_paths)}"
+                for i in range(count):
+                    task_path = f"{instance_path}-{i}"
                     child_path, _ = self.generate(name, task_path)
                     child_paths[task_path] = child_path
 
@@ -243,7 +271,9 @@ class FluxHierarchy:
             command = ["flux", "broker", "-S", f"local-uri={uri_string}", script_path]
 
         # Save the jobspec for the leaf or intermediate node.
-        jobspec = get_jobspec_from_dry_run(command, self.resources[label], log_path)
+        jobspec = get_jobspec_from_dry_run(
+            command, self.resources[label], log_path, clean_env=self.clean_env
+        )
         utils.write_json(jobspec, jobspec_filename)
         return jobspec_filename, is_leaf_group
 
@@ -259,9 +289,11 @@ class FluxHierarchy:
         # Generate the child jobs
         for task_name, child_path in child_paths.items():
             script += f"flux job submit --flags=waitable {child_path}\n"
+            # Wait for URIs to be ready...
+            script += f"flux uri --wait $(flux job last)\n"
             # Add the uri to the URIs directory. This isn't great, will work for now
             script += "job_host=$(flux hostlist --expand $(flux jobs -o '{nodelist}' $(flux job last) | sed -n '2p') | cut -d ' ' -f 1)\n"
-            script += f'echo "ssh://${{job_host}}{self.socket_dir}/{task_name}.sock" > {self.uri_dir}/{task_name} \n'
+            script += f'echo "ssh://${{job_host}}{self.socket_dir}/{task_name}.sock" > {self.uri_dir}/{task_name}\n'
             # script += f"flux uri --wait $(flux job last) > {self.uri_dir}/{task_name}\n"
         script += "\nflux job wait --all\n"
         return script
@@ -363,7 +395,7 @@ class FluxHierarchy:
         return self.submit_jobs(commands_list, equivalent=True)
 
 
-def get_jobspec_from_dry_run(command, resources, log_path=None):
+def get_jobspec_from_dry_run(command, resources, log_path=None, clean_env=True):
     """
     Use flux to generate a json jobspec with flux submit --dryrun
     """
@@ -385,7 +417,18 @@ def get_jobspec_from_dry_run(command, resources, log_path=None):
         cmd += ["--exclusive"]
     cmd += command
     process = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    return json.loads(process.stdout)
+    js = json.loads(process.stdout)
+
+    # Clean the environment
+    if clean_env:
+        keepers = {}
+        keep_names = ["PATH", "PWD", "SHELL", "PYTHONPATH", "USER"]
+        env = js["attributes"]["system"]["environment"]
+        for envar in env:
+            if envar in keep_names or envar.startswith("FLUX_"):
+                keepers[envar] = env[envar]
+        js["attributes"]["system"]["environment"] = keepers
+    return js
 
 
 class MultiprocessBulkRunner:

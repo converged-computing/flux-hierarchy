@@ -9,7 +9,7 @@ from flux_hierarchy.logger import LogColors
 def main(args, _):
 
     # Instantiate, build, and connect to the Flux Hierarchy!
-    hierarchy = FluxHierarchy(args.config, args.outdir)
+    hierarchy = FluxHierarchy(args.config, args.outdir, keep_env=args.keep_env)
     hierarchy.start(interactive=False)
 
     # Default to true if not set.
