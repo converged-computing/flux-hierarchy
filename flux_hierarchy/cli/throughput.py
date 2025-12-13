@@ -9,7 +9,7 @@ from flux_hierarchy.logger import LogColors
 def main(args, _):
 
     # Instantiate, build, and connect to the Flux Hierarchy!
-    hierarchy = FluxHierarchy(args.config, args.outdir, keep_env=args.keep_env)
+    hierarchy = FluxHierarchy(args.config, args.outdir, clean_env=not args.keep_env)
     hierarchy.start(interactive=False)
 
     # Default to true if not set.
@@ -18,7 +18,11 @@ def main(args, _):
 
     # Run the throughput test using the specialized 'throughput' method
     time0 = time.time()
-    results = hierarchy.throughput(args.execute, args.njobs)
+    results = hierarchy.throughput(args.execute, args.njobs, args.local)
+
+    # Keep the tree running? And if so, cleanup asset directories?
+    if not args.keep:
+        hierarchy.stop(cleanup=not args.skip_cleanup)
 
     if not results:
         print(f"{LogColors.RED}No jobs were tracked. Cannot calculate throughput.{LogColors.ENDC}")
