@@ -74,6 +74,9 @@ def get_parser():
         "-t", "--runtime", help="Simulated runtime of each job (default=1ms)", default="0.001s"
     )
     throughput.add_argument(
+        "--local", help="Submit to local URIs (do not use ssh)", action="store_true"
+    )
+    throughput.add_argument(
         "-x", "--exec", help="Do not simulate, actually run jobs", action="store_true"
     )
     throughput.add_argument(
@@ -85,6 +88,12 @@ def get_parser():
     )
     throughput.add_argument("execute", nargs=argparse.REMAINDER, default=["true"])
     throughput.add_argument("--outdir", help="Output directory")
+    throughput.add_argument(
+        "--keep", help="Keep hierarchy running (do not stop it)", action="store_true"
+    )
+    throughput.add_argument(
+        "--no-cleanup", help="Given stop, do NOT cleanup", action="store_true", dest="skip_cleanup"
+    )
 
     for cmd in [start, throughput, view]:
         cmd.add_argument("config", help="hierachy description YAML file")

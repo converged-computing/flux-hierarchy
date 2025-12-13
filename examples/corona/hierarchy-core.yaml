@@ -1,0 +1,32 @@
+version: 2
+
+# 2 nodes, on the level of the core, add --local to enable this.
+entrypoint: level1
+
+# Groups are templates for a level in the hierarchy.
+groups:
+  - name: level1
+    resources: level1
+    launch:
+    - group: level2
+      count: 2
+  - name: level2
+    resources: level2
+    launch:
+    - group: level3
+      count: 48
+  - name: level3
+    resources: level3
+
+# These are nested resources. If we have 8 at the top, we have to split that up
+resources:
+  level1:
+    nodes: 2
+    cores: 96
+  level2:
+    nodes: 1
+    cores: 48
+  level3:
+    nodes: 1
+    cores: 1
+
