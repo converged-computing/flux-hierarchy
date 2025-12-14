@@ -16,7 +16,6 @@ here = os.path.abspath(os.path.dirname(__file__))
 
 try:
     import flux
-    import flux.job
 except ImportError:
     flux = None
 
@@ -70,10 +69,19 @@ class FluxBaseHierarchy:
         """
         if not self.uris:
             return
-        self.pprint(f"Waiting for {len(self.uris)} leaf brokers...\n")
+
+        # Time each one and show to user
+        total = len(self.uris)
+        i = 1
+        self.pprint(f"Waiting for {total} leaf brokers...\n")
         for name, uri in self.uris.items():
+            start = time.monotonic()
             self.handles[name] = flux.Flux(uri)
             self.handles[name].uri = uri
+            end = time.monotonic()
+            elapsed = end - start
+            print(f"  => {i} broker took {elapsed} seconds.")
+            i += 1
         self.pprint(f"Connected!\n")
 
     @property
@@ -405,7 +413,7 @@ class FluxHierarchy(FluxBaseHierarchy):
         """
         Organize uris by hostname.
         """
-        for name, uri in self.uris.items():
+        for _, uri in self.uris.items():
             # Parse URI: ssh://node01/tmp/sock -> host: node01, path: /tmp/sock
             if "ssh://" in uri:
                 parts = uri.replace("ssh://", "").split(os.sep)
@@ -491,6 +499,7 @@ class FluxHierarchy(FluxBaseHierarchy):
             command = ["flux", "broker", "-S", f"local-uri={uri_string}", script_path]
 
         # Save the jobspec for the leaf or intermediate node.
+        print("    " + " ".join(command))
         jobspec = get_jobspec_from_dry_run(
             command, self.resources[label], log_path, clean_env=self.clean_env
         )
@@ -537,15 +546,15 @@ class FluxHierarchy(FluxBaseHierarchy):
         """
         print(f"Preparing throughput test for command: {' '.join(command)}")
         total_brokers = len(self.uris)
+        total_nodes = len(self.uris_by_host)
         jobs_per_broker = count // total_brokers
+        jobs_per_node = count // total_nodes
 
         # Submit Worker Jobs on the level of the node.
         # Each worker job will run flux-hierarchy
-        futures = []
-        print(f"Distributing work to {len(self.uris_by_host)} nodes...")
-
-        # This is the local handle to submit from.
-        handle = flux.Flux()
+        print(
+            f"Distributing {count} jobs to {len(self.uris_by_host)} nodes ({total_brokers} total brokers, {jobs_per_broker} jobs per broker)..."
+        )
 
         # We need a mapping of hostnames to ranks.
         # I think there is a way to do this with Flux - I can't reproduce it now.
@@ -554,10 +563,13 @@ class FluxHierarchy(FluxBaseHierarchy):
         # Grab the shortest path for the host, which should be highest in the tree
         for host, sockets in self.uris_by_host.items():
             result_file = os.path.join(self.results_dir, f"{host}.json")
+
+            # IMPORTANT: this count is the TOTAL across sockets here.
+            # Meaning the total for the node (but not uris)
             payload = {
                 "sockets": sockets,
                 "commands": [command],
-                "count": jobs_per_broker,
+                "count": jobs_per_node,
                 "clones": True,
                 "result_file": result_file,
                 "clean_env": self.clean_env,
@@ -576,25 +588,26 @@ class FluxHierarchy(FluxBaseHierarchy):
                 f"--jobid={self.jobid}",
                 sys.executable,
                 self.worker_exec,
-                json.dumps(payload),
             ]
+            print(" ".join(cmd))
+            cmd.append(json.dumps(payload))
 
             # Use flux exec in the background to the jobid
             # If we do a flux run/submit here, we need resources that may not exist
             subprocess.run(cmd, capture_output=True, text=True, check=True)
-
-            # Create spec and target intended node
-            spec = flux.job.JobspecV1.from_command(cmd, num_nodes=1, num_tasks=1)
-            spec.setattr("system.constraints.hostlist", [host])
-            # In case special PATH or PYTHONPATH
-            spec.environment = dict(os.environ)
-            futures.append(flux.job.submit_async(handle, spec))
 
         # Wait for results. Destroy the filesystem! Just kidding.
         # This is imperfect - instead of relying on Flux wait (maybe better?) we wait for files
         print("Waiting for workers...")
         while len(os.listdir(self.results_dir)) < len(self.uris_by_host):
             time.sleep(1)
+
+        # Wait for write finished
+        is_writing = True
+        while is_writing:
+            files = os.listdir(self.results_dir)
+            is_writing = any(x for x in files if x.endswith(".lock"))
+
         return combine_results(self.results_dir)
 
 

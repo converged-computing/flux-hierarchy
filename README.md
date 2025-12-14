@@ -55,27 +55,6 @@ level1 [Nodes: 2]
     └── level2 [Nodes: 1, Cores: 48]
 ```
 
-To get higher throughput, we need to remove the need for using ssh, and from the root to workers. Instead, we launch the multiprocessing bulk runners on the level of nodes, and they are assigned to the local (`local://`) sockets on the node instead of ssh (`ssh://`). This can be done by just adding the `--local` flag. It seems to make a huge difference!
-
-```bash
-flux-hierarchy throughput --local --njobs 1000000 ./examples/corona/hierarchy-core.yaml
-```
-```bash
-=> Waiting for 96 leaf brokers...
-=> Connected!
-Preparing throughput test for command: true
-Distributing work to 2 nodes...
-Waiting for workers...
-flux cancel f4gdJDdyf5
-
---- Throughput Results ---
-number of jobs: 1000000 (on 96 workers)
-   submit time: 13.347s (74924.4 job/s)
-script runtime: 6.685 s
-   job runtime: 3.706 s
-    throughput: 269859.1 job/s (script: 149592.4 job/s)
-```
-
 ## Development
 
 To build and release:
@@ -99,6 +78,7 @@ twine upload dist/flux-hierarchy-<version>*
 - Allow different job shapes / specs.
 - Expose simulation duration time
 - Expose other resource params
+- A check for non-local mode that we aren't going to ddos ssh.
 
 ## License
 
