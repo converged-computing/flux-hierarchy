@@ -31,12 +31,8 @@ def main(args, _):
     # Earliest start, latest end, total time to submit
     start_time = min(results["start_times"])
     end_time = max(results["end_times"])
-    submit_start_time = min(results["submit_times"])
-    submit_end_time = max(results["submit_end_times"])
 
     # This is JUST submit
-    submit_time = submit_end_time - submit_start_time
-    sjps = args.njobs / submit_time if submit_time > 0 else float("inf")
     script_runtime = time.time() - time0
 
     # This includes the job running - submit_t through clenaup_t
@@ -46,7 +42,6 @@ def main(args, _):
 
     print(f"\n--- Throughput Results ---")
     print(f"number of jobs: {args.njobs} (on {len(hierarchy.handles)} workers)")
-    print(f"   submit time: {submit_time:<6.3f}s ({sjps:5.1f} job/s)")
     print(f"script runtime: {script_runtime:<6.3f}s")
     print(f"   job runtime: {job_runtime:<6.3f}s")
     print(f"    throughput: {jps:<.1f} job/s (script: {jpsb:5.1f} job/s)")
