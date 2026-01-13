@@ -23,6 +23,13 @@ Let's first create a hierarchy. This will be a Flux job. You'll need to be in a 
 flux start
 ```
 
+If you need to install the library:
+
+```bssh
+# This is assuming the VSCode environment
+sudo pip install -e .
+```
+
 Then create a simple, flat hierarchy with all the resources allocated to one broker.
 
 ```bash

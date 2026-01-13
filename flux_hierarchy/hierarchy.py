@@ -9,6 +9,7 @@ import time
 
 import flux_hierarchy.utils as utils
 from flux_hierarchy.logger import LogColors
+from flux_hierarchy.registry import Registry
 from flux_hierarchy.results import combine_results
 from flux_hierarchy.runner import MultiprocessBulkRunner
 
@@ -54,6 +55,8 @@ class FluxBaseHierarchy:
         """
         if not flux:
             raise ValueError("Cannot import flux, which is needed here.")
+        # Get the local URI to communicate back to the root
+        self.local_uri = os.environ.get("FLUX_URI")
 
     def view(self):
         """
@@ -253,6 +256,7 @@ class FluxHierarchy(FluxBaseHierarchy):
         # to define an entire tree, but then only create a subgraph of it
         # This is the entrypoint.
         self.entrypoint = self.config["entrypoint"]
+        self.hostname = utils.run_command(["hostname"])["message"].strip()
 
     def init_structure(self, outdir):
         """
@@ -273,6 +277,10 @@ class FluxHierarchy(FluxBaseHierarchy):
         for path in self.socket_dir, self.logs_dir, self.uri_dir, self.results_dir:
             os.makedirs(path, exist_ok=True)
 
+        # Database registry for URI space.
+        registry_dir = os.path.join(self.outdir, "registry")
+        self.registry = Registry(registry_dir)
+
     def stage(self):
         """
         Stage the entire temporary directory across all nodes before start.
@@ -285,15 +293,13 @@ class FluxHierarchy(FluxBaseHierarchy):
         name = os.path.basename(self.outdir)
         cmd = ["flux", "archive", "create", "-C", self.outdir, "--name", name, "."]
         subprocess.run(cmd, capture_output=True, text=True, check=True)
-        cmd = ["flux", "exec", "-r", "all", "-x", "0", "mkdir", "-p", self.outdir]
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        cmd = ["flux", "exec", "-r", "all", "mkdir", "-p", self.outdir]
+        subprocess.run(cmd, capture_output=True, text=True, check=False)
         cmd = [
             "flux",
             "exec",
             "-r",
             "all",
-            "-x",
-            "0",
             "flux",
             "archive",
             "extract",
@@ -387,26 +393,35 @@ class FluxHierarchy(FluxBaseHierarchy):
         """
         Load hierarchy uris.
         """
-        # Wait until uris are generated
-        while len(os.listdir(self.uri_dir)) < len(self.uris):
-            time.sleep(1)
+        expected_count = len(self.uris)
+        self.pprint(f"Waiting for {expected_count} brokers to register in SQLite...\n")
 
-        uris = {}
-        print()
-        for name, _ in self.uris.items():
-            uri_path = os.path.join(self.uri_dir, name)
-            while not os.path.exists(uri_path):
-                self.pprint(f"[Waiting] {name}")
-                time.sleep(1)
-            uri = utils.read_file(uri_path).strip()
-            if not uri:
-                raise ValueError(f"URI for {name} was empty.")
-            uris[name] = uri
-        print()
-        self.uris = uris
+        # Poll the database
+        while True:
+            rows = self.registry.get_all()
 
-        # Generate the lookup of URI by hostname. We need to do this for
-        # submission from the level of the node, using local URIs instead of ssh://
+            if len(rows) >= expected_count:
+                break
+
+            # Simple progress indicator
+            print(f"  ... found {len(rows)}/{expected_count}", end="\r")
+            time.sleep(0.5)
+
+        # Convert DB rows back to the dictionary format
+        self.uris = {}
+        for row in rows:
+            uid, local, remote = row
+
+            # Logic to pick the best URI (Local if on same host, SSH otherwise)
+            # This allows the root script to drive workers efficiently
+            if f"/{self.hostname}/" in remote or self.hostname in remote:
+                self.uris[uid] = local
+            else:
+                self.uris[uid] = remote
+
+        print(f"\nAll {len(self.uris)} brokers registered.\n")
+
+        # Generate the lookup of URI by hostname
         self.organize_uris_by_host()
 
     def organize_uris_by_host(self):
@@ -470,8 +485,21 @@ class FluxHierarchy(FluxBaseHierarchy):
 
         # A leaf broker runs a broker that we can submit to
         if is_leaf_group:
+
+            # Save the local uri string, but prepare the remote one too.
             self.uris[instance_path] = uri_string
-            command = ["flux", "broker", "-S", f"local-uri={uri_string}", "sleep", "infinity"]
+
+            # Start the broker (sleep to keep running)
+            broker_start_script = self.write_broker_start(instance_path, uri_string)
+            print(broker_start_script)
+            command = [
+                "flux",
+                "broker",
+                "-S",
+                f"local-uri={uri_string}",
+                "/bin/bash",
+                broker_start_script,
+            ]
 
         # If we get here, we are generating an intermediate node.
         # Note that I tried first specifying cores/tasks, but it works better
@@ -506,6 +534,30 @@ class FluxHierarchy(FluxBaseHierarchy):
         utils.write_json(jobspec, jobspec_filename)
         return jobspec_filename, is_leaf_group
 
+    def write_broker_start(self, instance_path, uri_string):
+        """
+        Write a bash script to start the broker and register via Registry.
+        """
+        tmpfile = utils.get_tmpfile(
+            suffix=".sh", prefix=os.path.join(self.local_dir, "broker-start-")
+        )
+
+        # Calculate the local socket path (e.g., /tmp/fh-xx/sock/0-0.sock)
+        sock_path = uri_string.replace("local://", "")
+
+        # The target file in the registry directory
+        ssh_template = f"ssh://$(hostname){sock_path}"
+
+        with open(tmpfile, "w") as fd:
+            fd.write("#!/bin/bash\n")
+            for line in self.registry.get_register_block(instance_path, uri_string, ssh_template):
+                fd.write(line)
+
+            # Keep the broker alive so we can submit jobs to it
+            fd.write(f"sleep infinity\n")
+
+        return tmpfile
+
     def generate_script(self, child_paths):
         """
         Generate an intermediate worker script.
@@ -516,13 +568,9 @@ class FluxHierarchy(FluxBaseHierarchy):
         script += "set -euo pipefail\n\n"
 
         # Generate the child jobs
-        for task_name, child_path in child_paths.items():
+        for _, child_path in child_paths.items():
             script += f"flux job submit --flags=waitable {child_path}\n"
-            # Wait for URIs to be ready...
-            script += f"flux uri --wait $(flux job last)\n"
-            # Add the uri to the URIs directory. This isn't great, will work for now
-            script += "job_host=$(flux hostlist --expand $(flux jobs -o '{nodelist}' $(flux job last) | sed -n '2p') | cut -d ' ' -f 1)\n"
-            script += f'echo "ssh://${{job_host}}{self.socket_dir}/{task_name}.sock" > {self.uri_dir}/{task_name}\n'
+
             # script += f"flux uri --wait $(flux job last) > {self.uri_dir}/{task_name}\n"
         script += "\nflux job wait --all\n"
         return script
