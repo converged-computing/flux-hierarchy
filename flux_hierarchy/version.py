@@ -7,7 +7,11 @@ KEYWORDS = "flux, flux-framework, throughput, tree, instances"
 DESCRIPTION = "Instance tree generation for organization or higher throughput submission"
 LICENSE = "LICENSE"
 
-INSTALL_REQUIRES = (("rich", {"min_version": None}),)
+INSTALL_REQUIRES = (
+    ("rich", {"min_version": None}),
+    ("fastapi", {"min_version": None}),
+    ("uvicorn", {"min_version": None}),
+)
 
 TESTS_REQUIRES = (("pytest", {"min_version": None}),)
 INSTALL_REQUIRES_ALL = INSTALL_REQUIRES + TESTS_REQUIRES

@@ -1,6 +1,7 @@
 import glob
 import json
 import os
+import time
 
 
 class Registry:
@@ -12,23 +13,30 @@ class Registry:
         self.directory = os.path.abspath(directory)
         os.makedirs(self.directory, exist_ok=True)
 
-    def get_all(self):
+    def get_all(self, expected_count):
         """
         Read all .json files in the registry directory.
         """
         results = []
-        files = glob.glob(os.path.join(self.directory, "*.json"))
+        files = []
+        i = 0
+
+        while len(files) < expected_count:
+            files = glob.glob(os.path.join(self.directory, "*.json"))
+            time.sleep(0.1)
 
         for fpath in files:
             try:
                 with open(fpath, "r") as fd:
                     data = json.load(fd)
                     results.append((data["id"], data["local_uri"], data["ssh_uri"]))
+                    print(f"=> {i}/{len(files)}", end="\r")
             except (json.JSONDecodeError, IOError):
                 # Race condition: File exists but isn't fully flushed or readable yet.
                 # Skip it and pick it up on the next polling loop.
                 continue
 
+        print()
         return results
 
     def get_register_block(self, uid, local_uri, ssh_uri_template):

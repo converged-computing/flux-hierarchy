@@ -74,9 +74,6 @@ def get_parser():
         "-t", "--runtime", help="Simulated runtime of each job (default=1ms)", default="0.001s"
     )
     throughput.add_argument(
-        "--local", help="Submit to local URIs (do not use ssh)", action="store_true"
-    )
-    throughput.add_argument(
         "-x", "--exec", help="Do not simulate, actually run jobs", action="store_true"
     )
     throughput.add_argument(

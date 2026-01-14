@@ -18,7 +18,7 @@ def main(args, _):
 
     # Run the throughput test using the specialized 'throughput' method
     time0 = time.time()
-    results = hierarchy.throughput(args.execute, args.njobs, args.local)
+    results = hierarchy.throughput(args.execute, args.njobs)
 
     # Keep the tree running? And if so, cleanup asset directories?
     if not args.keep:
